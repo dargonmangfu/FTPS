@@ -2,6 +2,36 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from datasets import processing_times, machine_requirements, precedence_constraints
+import re
+import os
+import time
+import datetime
+
+# 设置图片保存目录
+IMAGE_DIR = r"E:\调度问题\图片"
+# 确保图片保存目录存在
+if not os.path.exists(IMAGE_DIR):
+    os.makedirs(IMAGE_DIR)
+    print(f"创建图片保存目录: {IMAGE_DIR}")
+
+# 生成时间戳，用于文件名
+timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+# 添加图表计数器字典
+chart_counters = {
+    "gantt": 0,
+    "timeline": 0,
+    "utilization": 0,
+    "evolution": 0  # 添加进化过程图表计数器
+}
+
+def clean_filename(title):
+    """将标题转换为合法的文件名"""
+    # 移除非法字符
+    cleaned = re.sub(r'[\\/*?:"<>|]', "", title)
+    # 替换空格为下划线
+    cleaned = cleaned.replace(" ", "_")
+    return cleaned
 
 def plot_schedule(schedule, makespan, machines_usage, n_operations, n_machines):
     """
@@ -45,7 +75,8 @@ def plot_schedule(schedule, makespan, machines_usage, n_operations, n_machines):
                         fontweight='bold', fontsize=9)
     
     # 设置图表属性
-    plt.title("Operation Schedule Gantt Chart", fontsize=16, fontweight='bold')
+    title = "Operation Schedule Gantt Chart"
+    plt.title(title, fontsize=16, fontweight='bold')
     plt.xlabel("Time", fontsize=14)
     plt.ylabel("Machine/Worker", fontsize=14)
     plt.yticks(range(n_machines), [f"Machine {i+1}" for i in range(n_machines)])
@@ -67,8 +98,12 @@ def plot_schedule(schedule, makespan, machines_usage, n_operations, n_machines):
     if legend_elements:
         plt.legend(handles=legend_elements, bbox_to_anchor=(1.05, 1), loc='upper left')
     
+    # 更新计数器并保存图片
+    chart_counters["gantt"] += 1
+    filename = os.path.join(IMAGE_DIR, f"{clean_filename(title)}_{timestamp}_{chart_counters['gantt']}.png")
     plt.tight_layout()
-    plt.savefig('scheduling_gantt.png', dpi=300, bbox_inches='tight')
+    plt.savefig(filename, dpi=300, bbox_inches='tight')
+    print(f"甘特图已保存为: {filename}")
     plt.show()
 
 def plot_operation_timeline(schedule, n_operations):
@@ -114,14 +149,20 @@ def plot_operation_timeline(schedule, n_operations):
                 plt.annotate('', xy=(start, i), xytext=(pred_completion, pred_index),
                            arrowprops=dict(arrowstyle='->', color='red', alpha=0.6, lw=1))
     
-    plt.title("Operations Timeline with Precedence Constraints", fontsize=14)
+    # 设置标题变量
+    title = "Operations Timeline with Precedence Constraints"
+    plt.title(title, fontsize=14)
     plt.xlabel("Time", fontsize=12)
     plt.ylabel("Operations (sorted by start time)", fontsize=12)
     plt.yticks(range(len(sorted_ops)), [f'Op{op}' for op in sorted_ops])
     plt.grid(axis='x', alpha=0.3)
     
+    # 更新计数器并保存图片
+    chart_counters["timeline"] += 1
+    filename = os.path.join(IMAGE_DIR, f"{clean_filename(title)}_{timestamp}_{chart_counters['timeline']}.png")
     plt.tight_layout()
-    plt.savefig('operation_timeline.png', dpi=300, bbox_inches='tight')
+    plt.savefig(filename, dpi=300, bbox_inches='tight')
+    print(f"时间线图已保存为: {filename}")
     plt.show()
 
 def analyze_machine_utilization(machines_usage, makespan, n_machines):
@@ -145,6 +186,9 @@ def analyze_machine_utilization(machines_usage, makespan, n_machines):
     # 绘制利用率图
     plt.figure(figsize=(12, 6))
     
+    # 设置标题变量
+    title = "Machine Utilization Analysis"
+    
     plt.subplot(1, 2, 1)
     bars = plt.bar(range(n_machines), utilization_rates, color='steelblue', alpha=0.7)
     plt.title("Machine Utilization Rates", fontsize=14)
@@ -164,8 +208,12 @@ def analyze_machine_utilization(machines_usage, makespan, n_machines):
            autopct='%1.1f%%', startangle=90)
     plt.title("Machine Workload Distribution", fontsize=14)
     
+    # 更新计数器并保存图片
+    chart_counters["utilization"] += 1
+    filename = os.path.join(IMAGE_DIR, f"{clean_filename(title)}_{timestamp}_{chart_counters['utilization']}.png")
     plt.tight_layout()
-    plt.savefig('machine_utilization.png', dpi=300, bbox_inches='tight')
+    plt.savefig(filename, dpi=300, bbox_inches='tight')
+    print(f"利用率分析图已保存为: {filename}")
     plt.show()
     
     # 打印统计信息
@@ -175,7 +223,47 @@ def analyze_machine_utilization(machines_usage, makespan, n_machines):
     print(f"最低利用率: {np.min(utilization_rates):.3f} (Machine {np.argmin(utilization_rates)+1})")
     print(f"利用率标准差: {np.std(utilization_rates):.3f}")
 
-def comprehensive_analysis(schedule, makespan, machines_usage, n_operations, n_machines):
+def plot_evolution_process(best_makespan, avg_makespan, title="算法进化过程"):
+    """
+    绘制算法进化过程图表
+    
+    参数:
+        best_makespan: 每代的最佳makespan值列表
+        avg_makespan: 每代的平均makespan值列表
+        title: 图表标题
+    """
+    plt.figure(figsize=(12, 6))
+    
+    generations = range(1, len(best_makespan) + 1)
+    
+    plt.plot(generations, best_makespan, 'r-', label='Best Makespan', linewidth=2)
+    plt.plot(generations, avg_makespan, 'b--', label='Average Makespan', linewidth=1.5)
+    
+    # 添加改进率标注
+    if len(best_makespan) > 1:
+        improvement = (best_makespan[0] - best_makespan[-1]) / best_makespan[0] * 100
+        plt.annotate(f'Total Improvement: {improvement:.2f}%', 
+                     xy=(len(best_makespan), best_makespan[-1]),
+                     xytext=(len(best_makespan) * 0.7, 
+                             best_makespan[0] - (best_makespan[0] - best_makespan[-1]) * 0.3),
+                     arrowprops=dict(arrowstyle='->', color='green', lw=1.5),
+                     fontsize=10, color='green')
+    
+    plt.title(title, fontsize=15)
+    plt.xlabel("Generation", fontsize=12)
+    plt.ylabel("Makespan", fontsize=12)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend(fontsize=10)
+    
+    # 更新计数器并保存图片
+    chart_counters["evolution"] += 1
+    filename = os.path.join(IMAGE_DIR, f"{clean_filename(title)}_{timestamp}_{chart_counters['evolution']}.png")
+    plt.tight_layout()
+    plt.savefig(filename, dpi=300, bbox_inches='tight')
+    print(f"进化过程图已保存为: {filename}")
+    plt.show()
+
+def comprehensive_analysis(schedule, makespan, machines_usage, n_operations, n_machines, best_makespan=None, avg_makespan=None):
     """
     综合分析调度结果
     
@@ -185,6 +273,8 @@ def comprehensive_analysis(schedule, makespan, machines_usage, n_operations, n_m
         machines_usage: 机器使用记录
         n_operations: 操作数量
         n_machines: 机器数量
+        best_makespan: 每代的最佳makespan值列表（可选）
+        avg_makespan: 每代的平均makespan值列表（可选）
     """
     print("=" * 60)
     print("调度结果综合分析")
@@ -201,6 +291,10 @@ def comprehensive_analysis(schedule, makespan, machines_usage, n_operations, n_m
     print(f"总机器时间: {total_machine_time:.2f}")
     print(f"完工时间 (Makespan): {makespan:.2f}")
     print(f"理论最小完工时间: {total_machine_time / n_machines:.2f}")
+    
+    # 如果提供了进化过程数据，则绘制进化过程图
+    if best_makespan is not None and avg_makespan is not None:
+        plot_evolution_process(best_makespan, avg_makespan, "NSGA-III算法进化过程")
     
     # 绘制所有图表
     plot_schedule(schedule, makespan, machines_usage, n_operations, n_machines)
