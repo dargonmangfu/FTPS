@@ -2,8 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import time
 import copy
-from util import uniformpoint, NDsort, lastselection_scheduling
-from datasets import get_model_data, processing_times, machine_requirements, precedence_constraints
+from util import uniformpoint, NDsort, lastselection_scheduling,GO
+from datasets import get_model_data, processing_times, machine_requirements, precedence_constraints, mutual_exclusion_constraints
 from evaluate import comprehensive_analysis
 import os
 import datetime
@@ -22,7 +22,7 @@ class SchedulingNSGAIII:
             t2: 多项式变异的分布指数
         """
         # 获取问题数据
-        self.n, self.m, self.jobs_operations, self.proc_times, self.machine_reqs, self.precedence = get_model_data()
+        self.n, self.jobs_operations, self.proc_times, self.machine_reqs, self.precedence, self.mutual_exclusion = get_model_data()
         
         # 初始化算法参数
         self.pop_size = pop_size
@@ -83,58 +83,133 @@ class SchedulingNSGAIII:
             if op not in precedence_constraints or not precedence_constraints[op]:
                 ready.append(op)
         
-        # 按照染色体中的优先级值对ready列表排序
-        ready.sort(key=lambda x: -chromosome[x])  # 值越大优先级越高
-        
-        while ready:
-            # 获取优先级最高的操作
-            current_op = ready.pop(0)
-            unscheduled.remove(current_op)
-            
-            # 获取此操作需要的机器数量
-            req_machines = machine_requirements[(1, current_op)]
-            
-            # 找到最早可以开始的时间
-            earliest_start = 0
-            
-            # 考虑前驱约束
-            if current_op in precedence_constraints:
-                for pred in precedence_constraints[current_op]:
-                    if finish_times[pred] > earliest_start:
-                        earliest_start = finish_times[pred]
-            
-            # 分配操作到机器上（考虑机器可用性）
-            available_machines = sorted(range(self.n_machines), key=lambda m: machine_avail_time[m])
-            
-            # 获取所需数量的机器
-            assigned_machines = available_machines[:req_machines]
-            
-            # 找到这些机器中最早的公共可用时间
-            start_time = max(earliest_start, max(machine_avail_time[m] for m in assigned_machines))
-            
-            # 更新操作的开始时间
-            schedule[current_op] = start_time
-            
-            # 计算操作的完成时间
-            end_time = start_time + processing_times[(1, current_op)]
-            finish_times[current_op] = end_time
-            
-            # 更新机器的可用时间
-            for m in assigned_machines:
-                machine_avail_time[m] = end_time
-                machines_usage.append((m, start_time, end_time, current_op))
-            
-            # 检查新的可执行操作
-            for op in unscheduled:
-                if op not in ready:
+        # 主调度循环
+        while unscheduled:
+            # 如果ready列表为空，强制添加一个可调度的操作
+            if not ready:
+                # 找到所有前驱已完成的操作
+                for op in unscheduled:
                     if op in precedence_constraints:
                         if all(pred not in unscheduled for pred in precedence_constraints[op]):
                             ready.append(op)
                     else:
                         ready.append(op)
+                
+                # 如果还是没有可调度的操作，说明存在循环依赖，强制添加第一个
+                if not ready:
+                    ready.append(unscheduled[0])
             
-            # 按照染色体中的优先级值对ready列表重新排序
-            ready.sort(key=lambda x: -chromosome[x])
+            # 按照染色体中的优先级值对ready列表排序
+            ready.sort(key=lambda x: -chromosome[x])  # 值越大优先级越高
+            
+            # 尝试调度ready列表中的操作
+            scheduled_this_round = False
+            i = 0
+            
+            while i < len(ready) and not scheduled_this_round:
+                current_op = ready[i]
+                
+                # 检查是否可以调度（考虑交叉关系约束）
+                can_schedule = True
+                
+                if current_op in mutual_exclusion_constraints:
+                    conflicting_op = mutual_exclusion_constraints[current_op]
+                    # 如果冲突操作已经调度但还未完成，检查时间冲突
+                    if conflicting_op not in unscheduled:
+                        # 计算当前操作的最早开始时间
+                        earliest_start = 0
+                        
+                        # 考虑前驱约束
+                        if current_op in precedence_constraints:
+                            for pred in precedence_constraints[current_op]:
+                                if finish_times[pred] > earliest_start:
+                                    earliest_start = finish_times[pred]
+                        
+                        # 如果冲突操作还在执行中，需要等待其完成
+                        if finish_times[conflicting_op] > earliest_start:
+                            earliest_start = finish_times[conflicting_op]
+                
+                if can_schedule:
+                    # 调度当前操作
+                    ready.pop(i)
+                    unscheduled.remove(current_op)
+                    
+                    # 获取此操作需要的机器数量
+                    req_machines = machine_requirements[(1, current_op)]
+                    
+                    # 找到最早可以开始的时间
+                    earliest_start = 0
+                    
+                    # 考虑前驱约束
+                    if current_op in precedence_constraints:
+                        for pred in precedence_constraints[current_op]:
+                            if finish_times[pred] > earliest_start:
+                                earliest_start = finish_times[pred]
+                    
+                    # 考虑交叉关系约束
+                    if current_op in mutual_exclusion_constraints:
+                        conflicting_op = mutual_exclusion_constraints[current_op]
+                        if conflicting_op not in unscheduled and finish_times[conflicting_op] > 0:
+                            earliest_start = max(earliest_start, finish_times[conflicting_op])
+                    
+                    # 分配操作到机器上（考虑机器可用性）
+                    available_machines = sorted(range(self.n_machines), key=lambda m: machine_avail_time[m])
+                    
+                    # 获取所需数量的机器
+                    assigned_machines = available_machines[:req_machines]
+                    
+                    # 找到这些机器中最早的公共可用时间
+                    start_time = max(earliest_start, max(machine_avail_time[m] for m in assigned_machines))
+                    
+                    # 更新操作的开始时间
+                    schedule[current_op] = start_time
+                    
+                    # 计算操作的完成时间
+                    end_time = start_time + processing_times[(1, current_op)]
+                    finish_times[current_op] = end_time
+                    
+                    # 更新机器的可用时间
+                    for m in assigned_machines:
+                        machine_avail_time[m] = end_time
+                        machines_usage.append((m, start_time, end_time, current_op))
+                    
+                    scheduled_this_round = True
+                    
+                    # 检查新的可执行操作
+                    for op in unscheduled:
+                        if op not in ready:
+                            if op in precedence_constraints:
+                                if all(pred not in unscheduled for pred in precedence_constraints[op]):
+                                    ready.append(op)
+                            else:
+                                ready.append(op)
+                else:
+                    i += 1
+            
+            # 如果这一轮没有调度任何操作，强制调度第一个ready操作
+            if not scheduled_this_round and ready:
+                current_op = ready.pop(0)
+                unscheduled.remove(current_op)
+                
+                # 强制调度
+                req_machines = machine_requirements[(1, current_op)]
+                available_machines = sorted(range(self.n_machines), key=lambda m: machine_avail_time[m])
+                assigned_machines = available_machines[:req_machines]
+                
+                earliest_start = 0
+                if current_op in precedence_constraints:
+                    for pred in precedence_constraints[current_op]:
+                        if finish_times[pred] > earliest_start:
+                            earliest_start = finish_times[pred]
+                
+                start_time = max(earliest_start, max(machine_avail_time[m] for m in assigned_machines))
+                schedule[current_op] = start_time
+                end_time = start_time + processing_times[(1, current_op)]
+                finish_times[current_op] = end_time
+                
+                for m in assigned_machines:
+                    machine_avail_time[m] = end_time
+                    machines_usage.append((m, start_time, end_time, current_op))
         
         # 计算总完工时间
         makespan = max(finish_times)
@@ -162,73 +237,28 @@ class SchedulingNSGAIII:
         
         return objectives
     
-    def tournament_selection(self, population, objectives, k=2):
-        """锦标赛选择"""
+    def roulette_wheel_selection(self, population, objectives):
+        """轮盘赌选择（基于适应度排名）"""
         selected = []
         n_pop = len(population)
         
+        # 计算非支配排序
+        fronts, _ = NDsort(objectives, n_pop, self.M)
+        
+        # 转换为适应度值（前沿越小适应度越高）
+        max_front = np.max(fronts)
+        fitness = max_front + 1 - fronts
+        
+        # 归一化适应度
+        total_fitness = np.sum(fitness)
+        probabilities = fitness / total_fitness
+        
+        # 选择个体
         for _ in range(n_pop):
-            # 随机选择k个个体
-            candidates = np.random.choice(n_pop, k, replace=False)
-            
-            # 基于非支配排序选择最好的个体
-            fronts, _ = NDsort(objectives[candidates], n_pop, self.M)
-            best_candidate = candidates[np.argmin(fronts)]
-            selected.append(population[best_candidate])
+            selected_idx = np.random.choice(n_pop, p=probabilities)
+            selected.append(population[selected_idx])
         
         return np.array(selected)
-    
-    def crossover_mutation(self, population):
-        """交叉和变异操作"""
-        n_pop, n_var = population.shape
-        
-        # 将种群分成两半
-        half = n_pop // 2
-        population1 = population[:half]
-        population2 = population[half:]
-        
-        # 模拟二进制交叉(SBX)
-        beta = np.zeros((half, n_var))
-        mu = np.random.random((half, n_var))
-        beta[mu <= 0.5] = (2 * mu[mu <= 0.5]) ** (1 / (self.t1 + 1))
-        beta[mu > 0.5] = (2 - 2 * mu[mu > 0.5]) ** (-1 / (self.t1 + 1))
-        beta = beta * ((-1) ** np.random.randint(0, 2, size=(half, n_var)))
-        beta[np.random.random((half, n_var)) < 0.5] = 1
-        beta[np.tile(np.random.random((half, 1)) > self.pc, (1, n_var))] = 1
-        
-        offspring = np.vstack([
-            (population1 + population2) / 2 + beta * (population1 - population2) / 2,
-            (population1 + population2) / 2 - beta * (population1 - population2) / 2
-        ])
-        
-        # 多项式变异
-        lower = np.zeros(n_var)
-        upper = np.ones(n_var)
-        site = np.random.random((n_pop, n_var)) < self.pm / n_var
-        mu = np.random.random((n_pop, n_var))
-        
-        # 变异 - 避免使用布尔索引，改用逐元素操作
-        delta1 = (offspring - lower) / (upper - lower)
-        delta2 = (upper - offspring) / (upper - lower)
-        
-        # 对于mu <= 0.5的变异
-        temp1 = site & (mu <= 0.5)
-        if np.any(temp1):
-            delta_q = ((2 * mu + (1 - 2 * mu) * 
-                       (1 - delta1) ** (self.t2 + 1)) ** (1 / (self.t2 + 1)) - 1)
-            offspring = offspring + temp1 * ((upper - lower) * delta_q)
-        
-        # 对于mu > 0.5的变异
-        temp2 = site & (mu > 0.5)
-        if np.any(temp2):
-            delta_q = (1 - (2 * (1 - mu) + 2 * (mu - 0.5) * 
-                            (1 - delta2) ** (self.t2 + 1)) ** (1 / (self.t2 + 1)))
-            offspring = offspring + temp2 * ((upper - lower) * delta_q)
-        
-        # 确保值在范围内
-        offspring = np.clip(offspring, 0, 1)
-        
-        return offspring
     
     def environment_selection(self, population, offspring):
         """环境选择操作"""
@@ -280,15 +310,20 @@ class SchedulingNSGAIII:
         
         # 记录每代的最佳makespan
         best_makespan = []
-        avg_makespan = []  # 添加平均makespan记录
+        avg_makespan = []
         
         # 开始进化
         for gen in range(self.max_gen):
-            # 锦标赛选择
-            mating_pool = self.tournament_selection(population, objectives)
+            # 检查种群多样性
+            # if gen % 20 == 0:
+            #    unique_count = len(np.unique(population.round(4), axis=0))
+            #    print(f"第 {gen} 代: 唯一个体数 = {unique_count}/{len(population)}")
+            
+            # 使用轮盘赌选择
+            mating_pool = self.roulette_wheel_selection(population, objectives)
             
             # 交叉和变异
-            offspring = self.crossover_mutation(mating_pool)
+            offspring = GO(mating_pool, self.t1, self.t2, self.pc, self.pm)
             
             # 环境选择
             population = self.environment_selection(population, offspring)
@@ -313,8 +348,8 @@ class SchedulingNSGAIII:
         # 解码最佳解
         schedule, makespan, machines_usage = self.decode_chromosome(best_solution)
         
-        # 修改返回值，增加best_makespan和avg_makespan
-        return schedule, makespan, machines_usage, best_solution, objectives[best_idx], best_makespan, avg_makespan
+        # 修改返回值，增加最终种群和目标值
+        return schedule, makespan, machines_usage, best_solution, objectives[best_idx], best_makespan, avg_makespan, population, objectives
 
 # 运行算法
 if __name__ == "__main__":
@@ -329,10 +364,10 @@ if __name__ == "__main__":
     
     # 允许通过命令行参数配置算法参数
     import sys
-    pop_size = 100
-    max_gen = 100
+    pop_size = 200
+    max_gen = 200
     pc = 0.9  # 交叉概率
-    pm = 0.1  # 变异概率
+    pm = 0.2  # 变异概率
     
     # 可以通过命令行参数修改这些值
     if len(sys.argv) > 1:
@@ -356,8 +391,8 @@ if __name__ == "__main__":
     start_time = time.time()
     
     try:
-        # 运行算法并获取所有返回值，包括进化记录
-        schedule, makespan, machines_usage, best_solution, best_objectives, best_makespan_history, avg_makespan_history = nsga3.run()
+        # 运行算法并获取所有返回值，包括进化记录和最终种群
+        schedule, makespan, machines_usage, best_solution, best_objectives, best_makespan_history, avg_makespan_history, population, objectives = nsga3.run()
         
         # 记录结束时间
         end_time = time.time()
@@ -374,9 +409,31 @@ if __name__ == "__main__":
         for op in range(nsga3.n_operations):
             print(f"操作 {op}: {schedule[op]:.2f}")
         
-        # 使用evaluate.py中的函数进行综合分析，传入进化过程数据
+        # 使用evaluate.py中的函数进行综合分析，传入进化过程数据和最终种群
         comprehensive_analysis(schedule, makespan, machines_usage, nsga3.n_operations, nsga3.n_machines, 
-                          best_makespan=best_makespan_history, avg_makespan=avg_makespan_history)
+                              best_makespan=best_makespan_history, avg_makespan=avg_makespan_history,
+                              population=population, objectives=objectives)
+
+    except Exception as e:
+        print(f"运行过程中发生错误: {e}")
+        import traceback
+        traceback.print_exc()
+        # 输出结果
+        print("\n" + "="*50)
+        print("最优调度结果:")
+        print(f"完工时间 (Makespan): {makespan:.2f}")
+        print(f"资源不平衡指标: {best_objectives[1]:.4f}")
+        print(f"算法运行时间: {end_time - start_time:.2f} 秒")
+        
+        # 显示详细的调度结果
+        print("\n操作开始时间:")
+        for op in range(nsga3.n_operations):
+            print(f"操作 {op}: {schedule[op]:.2f}")
+        
+        # 使用evaluate.py中的函数进行综合分析，传入进化过程数据和最终种群
+        comprehensive_analysis(schedule, makespan, machines_usage, nsga3.n_operations, nsga3.n_machines, 
+                              best_makespan=best_makespan_history, avg_makespan=avg_makespan_history,
+                              population=population, objectives=objectives)
 
     except Exception as e:
         print(f"运行过程中发生错误: {e}")

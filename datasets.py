@@ -16,3 +16,56 @@ precedence_constraints = {0: [], 1: [0], 2: [0], 3: [0], 4: [0], 5: [0], 6: [0],
                           10: [7, 8], 11: [7, 8], 12: [3, 9, 10, 11], 13: [9, 10, 11], 14: [4, 12], 15: [12], 16: [3, 4, 5], 17: [3, 4, 5], 18: [16, 17], 19: [14, 15],
                           20: [13, 19], 21: [20], 22: [21], 23: [22], 24: [20], 25: [24], 26: [6, 18, 23, 25], 27: [26], 28: [27], 29: [6, 18, 23, 25],
                           30: [6, 18, 23, 25], 31: [28, 29, 30], 32: [31], 33: [32]}
+
+# 添加交叉关系约束
+# 格式: {操作1: 操作2} 表示操作1和操作2不能并行执行
+mutual_exclusion_constraints = {
+    14: 15,  # 14和15是交叉关系，不能并行
+    15: 14,  # 双向约束
+    29: 30,  # 29和30是交叉关系，不能并行
+    30: 29   # 双向约束
+}
+
+# 为pM24模型准备的数据
+def get_model_data():
+    """
+    将原始数据转换为pM24模型所需的格式
+    返回: n, jobs_operations, processing_times_adapted, machine_requirements_adapted, precedence_constraints_adapted, mutual_exclusion_adapted
+    """
+    # 假设只有一个作业，包含所有操作
+    n = 1  # 作业数量
+    
+    # 操作数量
+    n_operations = len(processing_times)
+    jobs_operations = {1: n_operations}
+    
+    # 适配处理时间格式 (job_id, operation_id) -> time
+    processing_times_adapted = {}
+    for (job_id, op_id), time in processing_times.items():
+        processing_times_adapted[job_id, op_id + 1] = time  # 操作从1开始编号
+    
+    # 适配机器需求格式
+    machine_requirements_adapted = {}
+    for (job_id, op_id), req in machine_requirements.items():
+        machine_requirements_adapted[job_id, op_id + 1] = req
+    
+    # 适配前驱约束格式 - 转换为job内的约束格式
+    precedence_constraints_adapted = {1: {}}
+    for op_id, predecessors in precedence_constraints.items():
+        if predecessors:  # 如果有前驱
+            # 将操作ID从0开始转换为1开始
+            precedence_constraints_adapted[1][op_id + 1] = [pred + 1 for pred in predecessors]
+    
+    # 适配交叉关系约束格式
+    mutual_exclusion_adapted = {}
+    for op1, op2 in mutual_exclusion_constraints.items():
+        mutual_exclusion_adapted[op1 + 1] = op2 + 1  # 操作从1开始编号
+    
+    return n, jobs_operations, processing_times_adapted, machine_requirements_adapted, precedence_constraints_adapted, mutual_exclusion_adapted
+
+# 为evaluate函数准备的原始数据（保持原格式）
+def get_original_data():
+    """
+    返回原始格式的数据供evaluate函数使用
+    """
+    return processing_times, machine_requirements, precedence_constraints, mutual_exclusion_constraints

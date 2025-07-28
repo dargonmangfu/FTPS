@@ -4,26 +4,59 @@ import numpy as np
 import copy
 import math
 
-def uniformpoint(N,M):
-    H1=1
-    while (comb(H1+M-1,M-1)<=N):
-        H1=H1+1
-    H1=H1-1
-    W=np.array(list(combinations(range(H1+M-1),M-1)))-np.tile(np.array(list(range(M-1))),(int(comb(H1+M-1,M-1)),1))
-    W=(np.hstack((W,H1+np.zeros((W.shape[0],1))))-np.hstack((np.zeros((W.shape[0],1)),W)))/H1
-    if H1<M:
-        H2=0
-        while(comb(H1+M-1,M-1)+comb(H2+M-1,M-1) <= N):
-            H2=H2+1
-        H2=H2-1
-        if H2>0:
-            W2=np.array(list(combinations(range(H2+M-1),M-1)))-np.tile(np.array(list(range(M-1))),(int(comb(H2+M-1,M-1)),1))
-            W2=(np.hstack((W2,H2+np.zeros((W2.shape[0],1))))-np.hstack((np.zeros((W2.shape[0],1)),W2)))/H2
-            W2=W2/2+1/(2*M)
-            W=np.vstack((W,W2))#按列合并
-    W[W<1e-6]=1e-6
-    N=W.shape[0]
-    return W,N
+def uniformpoint(N, M):
+    """
+    生成均匀分布的参考点，用于NSGA-III算法中的选择操作
+    
+    参数:
+        N: 期望生成的参考点数量
+        M: 目标函数的维度
+        
+    返回:
+        W: 生成的参考点集合，形状为(实际点数, M)
+        N: 实际生成的参考点数量
+    """
+    # 确定参数H1，它控制每个维度上的划分数
+    # 增加H1直到能生成足够多的点
+    H1 = 1
+    while (comb(H1+M-1, M-1) <= N):
+        H1 = H1+1
+    H1 = H1-1
+    
+    # 生成初始参考点集
+    # 利用组合数学生成单形上均匀分布的点
+    W = np.array(list(combinations(range(H1+M-1), M-1))) - np.tile(np.array(list(range(M-1))), (int(comb(H1+M-1, M-1)), 1))
+    
+    # 计算权重向量，将组合索引转换为实际权重值
+    # 每个参考点的坐标和为1，形成单形空间中的均匀分布
+    W = (np.hstack((W, H1+np.zeros((W.shape[0], 1)))) - np.hstack((np.zeros((W.shape[0], 1)), W))) / H1
+    
+    # 当H1<M时，简单均匀划分可能生成的点不够
+    # 需要添加一组额外的"内部"参考点
+    if H1 < M:
+        H2 = 0
+        while(comb(H1+M-1, M-1) + comb(H2+M-1, M-1) <= N):
+            H2 = H2+1
+        H2 = H2-1
+        
+        if H2 > 0:
+            # 生成第二组参考点
+            W2 = np.array(list(combinations(range(H2+M-1), M-1))) - np.tile(np.array(list(range(M-1))), (int(comb(H2+M-1, M-1)), 1))
+            W2 = (np.hstack((W2, H2+np.zeros((W2.shape[0], 1)))) - np.hstack((np.zeros((W2.shape[0], 1)), W2))) / H2
+            
+            # 将第二组点向中心偏移
+            W2 = W2/2 + 1/(2*M)
+            
+            # 合并两组参考点
+            W = np.vstack((W, W2))
+    
+    # 避免数值不稳定，设置最小值限制
+    W[W < 1e-6] = 1e-6
+    
+    # 获取实际生成的参考点数量
+    N = W.shape[0]
+    
+    return W, N
 
 def funfun(M,N,name):
     #种群初始化
@@ -95,7 +128,7 @@ def GO(pop,t1,t2,pc,pm):
     #多项式变异
     low=np.zeros((2*N,D))
     up=np.ones((2*N,D))
-    site=np.random.random_sample([2*N,D]) < pm/D
+    site=np.random.random_sample([2*N,D]) < pm
     mu = np.random.random_sample([2*N,D])
     temp = site & (mu<=0.5)
     off[off<low]=low[off<low]

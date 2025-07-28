@@ -22,7 +22,8 @@ chart_counters = {
     "gantt": 0,
     "timeline": 0,
     "utilization": 0,
-    "evolution": 0  # 添加进化过程图表计数器
+    "evolution": 0, # 添加进化过程图表计数器
+    "pareto": 0  # 添加帕累托前沿图表计数器
 }
 
 def clean_filename(title):
@@ -223,7 +224,7 @@ def analyze_machine_utilization(machines_usage, makespan, n_machines):
     print(f"最低利用率: {np.min(utilization_rates):.3f} (Machine {np.argmin(utilization_rates)+1})")
     print(f"利用率标准差: {np.std(utilization_rates):.3f}")
 
-def plot_evolution_process(best_makespan, avg_makespan, title="算法进化过程"):
+def plot_evolution_process(best_makespan, avg_makespan, title="Algorithm Evolution Process"):
     """
     绘制算法进化过程图表
     
@@ -238,6 +239,8 @@ def plot_evolution_process(best_makespan, avg_makespan, title="算法进化过�
     
     plt.plot(generations, best_makespan, 'r-', label='Best Makespan', linewidth=2)
     plt.plot(generations, avg_makespan, 'b--', label='Average Makespan', linewidth=1.5)
+    
+    # 删除当前makespan作为水平参考线的代码
     
     # 添加改进率标注
     if len(best_makespan) > 1:
@@ -263,7 +266,73 @@ def plot_evolution_process(best_makespan, avg_makespan, title="算法进化过�
     print(f"进化过程图已保存为: {filename}")
     plt.show()
 
-def comprehensive_analysis(schedule, makespan, machines_usage, n_operations, n_machines, best_makespan=None, avg_makespan=None):
+def plot_pareto_front(objectives, best_solutions=None, highlight_idx=None, title="Pareto Front Visualization"):
+    """
+    绘制帕累托前沿图
+    
+    参数:
+        objectives: 二维数组，种群的目标函数值 [种群大小 x 目标数]
+        best_solutions: 可选，一组特定的最优解目标值
+        highlight_idx: 可选，要在图中突出显示的解的索引
+        title: 图表标题
+    """
+    plt.figure(figsize=(10, 8))
+    
+    # 确保objectives是numpy数组
+    objectives = np.array(objectives)
+    
+    # 使用util.py中的NDsort找出非支配解
+    from util import NDsort
+    fronts, _ = NDsort(objectives, len(objectives), objectives.shape[1])
+    pareto_indices = np.where(fronts == 1)[0]
+    pareto_solutions = objectives[pareto_indices]
+    
+    # 绘制所有解 
+    plt.scatter(objectives[:, 0], objectives[:, 1], c='lightgray', alpha=0.5, label='All Solutions')
+    
+    # 绘制帕累托前沿 
+    plt.scatter(pareto_solutions[:, 0], pareto_solutions[:, 1], c='blue', s=80, label='Pareto Optimal Solutions')
+    
+    # 连接帕累托前沿上的点（按makespan排序）
+    sorted_pareto = pareto_solutions[pareto_solutions[:, 0].argsort()]
+    plt.plot(sorted_pareto[:, 0], sorted_pareto[:, 1], 'b--', alpha=0.3)
+    
+    # 如果提供了特定的最优解集合，也绘制它们
+    if best_solutions is not None:
+        best_solutions = np.array(best_solutions)
+        plt.scatter(best_solutions[:, 0], best_solutions[:, 1], c='green', s=100, marker='*', label='Selected Best Solutions')
+    
+    # 突出显示特定解
+    if highlight_idx is not None and highlight_idx < len(objectives):
+        plt.scatter(objectives[highlight_idx, 0], objectives[highlight_idx, 1], 
+                  c='red', s=150, marker='X', label='Current Selected Solution')
+        
+        # 添加标注
+        plt.annotate(f'Makespan: {objectives[highlight_idx, 0]:.2f}\nImbalance: {objectives[highlight_idx, 1]:.4f}',
+                   xy=(objectives[highlight_idx, 0], objectives[highlight_idx, 1]),
+                   xytext=(objectives[highlight_idx, 0] + (max(objectives[:, 0]) - min(objectives[:, 0]))*0.05, 
+                           objectives[highlight_idx, 1]),
+                   arrowprops=dict(arrowstyle='->', color='red'))
+    
+    # 设置图表属性
+    plt.title(title, fontsize=14)
+    plt.xlabel("Objective 1: Completion Time (Makespan)", fontsize=12)
+    plt.ylabel("Objective 2: Resource Utilization Imbalance", fontsize=12)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend(loc='best')
+    
+    # 更新计数器并保存图片
+    chart_counters["pareto"] = chart_counters.get("pareto", 0) + 1
+    filename = os.path.join(IMAGE_DIR, f"{clean_filename(title)}_{timestamp}_{chart_counters['pareto']}.png")
+    plt.tight_layout()
+    plt.savefig(filename, dpi=300, bbox_inches='tight')
+    print(f"帕累托前沿图已保存为: {filename}")
+    plt.show()
+    
+    # 返回帕累托最优解的索引，方便后续分析
+    return pareto_indices
+
+def comprehensive_analysis(schedule, makespan, machines_usage, n_operations, n_machines, best_makespan=None, avg_makespan=None, population=None, objectives=None):
     """
     综合分析调度结果
     
@@ -275,6 +344,8 @@ def comprehensive_analysis(schedule, makespan, machines_usage, n_operations, n_m
         n_machines: 机器数量
         best_makespan: 每代的最佳makespan值列表（可选）
         avg_makespan: 每代的平均makespan值列表（可选）
+        population: 最终种群（可选，用于帕累托分析）
+        objectives: 最终种群的目标函数值（可选，用于帕累托分析）
     """
     print("=" * 60)
     print("调度结果综合分析")
@@ -294,9 +365,20 @@ def comprehensive_analysis(schedule, makespan, machines_usage, n_operations, n_m
     
     # 如果提供了进化过程数据，则绘制进化过程图
     if best_makespan is not None and avg_makespan is not None:
-        plot_evolution_process(best_makespan, avg_makespan, "NSGA-III算法进化过程")
+        plot_evolution_process(best_makespan, avg_makespan, "NSGA-III Algorithm Evolution Process")
     
     # 绘制所有图表
     plot_schedule(schedule, makespan, machines_usage, n_operations, n_machines)
     plot_operation_timeline(schedule, n_operations)
     analyze_machine_utilization(machines_usage, makespan, n_machines)
+    
+    # 如果提供了种群和目标函数值，则绘制帕累托前沿
+    if objectives is not None:
+        # 找出最佳解的索引
+        best_idx = np.argmin(objectives[:, 0])
+        
+        # 绘制帕累托前沿，突出显示最佳makespan解
+        pareto_indices = plot_pareto_front(objectives, highlight_idx=best_idx, 
+                                        title="Pareto Front Visualization")
+        
+        print(f"\n找到 {len(pareto_indices)} 个帕累托最优解")
